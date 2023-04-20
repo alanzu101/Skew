@@ -1,14 +1,16 @@
 //
 // Created by Yi Lu on 9/14/18.
+// Modified by Alan Zu on 2/28/2023.
 //
 
 #pragma once
 
 #include <glog/logging.h>
+#include <sstream>
 
 namespace aria {
 
-class CalvinRWKey {
+class SkewRWKey {
 public:
   // local index read bit
 
@@ -25,34 +27,40 @@ public:
     return (bitvec >> LOCAL_INDEX_READ_BIT_OFFSET) & LOCAL_INDEX_READ_BIT_MASK;
   }
 
-  // read lock bit
-
-  void set_read_lock_bit() {
-    clear_read_lock_bit();
-    bitvec |= READ_LOCK_BIT_MASK << READ_LOCK_BIT_OFFSET;
+  // read_for_write_key bit
+  void set_read_for_write_key_bit() {
+    clear_read_for_write_key_bit();
+    bitvec |= READ_FOR_WRITE_KEY_BIT_MASK << READ_FOR_WRITE_KEY_BIT_OFFSET;
   }
 
-  void clear_read_lock_bit() {
-    bitvec &= ~(READ_LOCK_BIT_MASK << READ_LOCK_BIT_OFFSET);
+  void clear_read_for_write_key_bit() {
+    bitvec &= ~(READ_FOR_WRITE_KEY_BIT_MASK << READ_FOR_WRITE_KEY_BIT_OFFSET);
   }
 
-  uint32_t get_read_lock_bit() const {
-    return (bitvec >> READ_LOCK_BIT_OFFSET) & READ_LOCK_BIT_MASK;
+  uint32_t get_read_for_write_key_bit() const {
+    return (bitvec >> READ_FOR_WRITE_KEY_BIT_OFFSET) & READ_FOR_WRITE_KEY_BIT_MASK;
   }
 
-  // write lock bit
-
-  void set_write_lock_bit() {
-    clear_write_lock_bit();
-    bitvec |= WRITE_LOCK_BIT_MASK << WRITE_LOCK_BIT_OFFSET;
+  bool is_read_for_write_key() {
+    return bitvec & (READ_FOR_WRITE_KEY_BIT_MASK << READ_FOR_WRITE_KEY_BIT_OFFSET);
   }
 
-  void clear_write_lock_bit() {
-    bitvec &= ~(WRITE_LOCK_BIT_MASK << WRITE_LOCK_BIT_OFFSET);
+  // write_key bit
+  void set_write_key_bit() {
+    clear_write_key_bit();
+    bitvec |= WRITE_KEY_BIT_MASK << WRITE_KEY_BIT_OFFSET;
   }
 
-  uint32_t get_write_lock_bit() const {
-    return (bitvec >> WRITE_LOCK_BIT_OFFSET) & WRITE_LOCK_BIT_MASK;
+  void clear_write_key_bit() {
+    bitvec &= ~(WRITE_KEY_BIT_MASK << WRITE_KEY_BIT_OFFSET);
+  }
+
+  uint32_t get_write_key_bit() const {
+    return (bitvec >> WRITE_KEY_BIT_OFFSET) & WRITE_KEY_BIT_MASK;
+  }
+
+  bool is_write_key() {
+    return bitvec & (WRITE_KEY_BIT_MASK << WRITE_KEY_BIT_OFFSET);
   }
 
   // prepare processed bit
@@ -126,17 +134,64 @@ public:
 
   void *get_value() const { return value; }
 
+  const std::string &key_toString(bool is_ycsb) {
+    if (str_key != "") {
+      return str_key;
+    }
+    std::stringstream ss;
+    size_t tableId = get_table_id();
+
+    // for ycsb
+    if (is_ycsb && tableId == ycsb::ycsb::tableID) {
+      const auto &k = *static_cast<const ycsb::ycsb::key *>(key);
+      ss << k.Y_KEY;
+      str_key = ss.str();
+      return str_key;
+    }
+
+    // for tpcc
+    if (tableId == tpcc::warehouse::tableID) {
+      const auto &k = *static_cast<const tpcc::warehouse::key *>(key);
+      ss << tableId << ":" << k.W_ID;
+    } else if (tableId == tpcc::district::tableID) {
+      const auto &k = *static_cast<const tpcc::district::key *>(key);
+      ss << tableId << ":" << k.D_W_ID << ":" << k.D_ID;
+    } else if (tableId == tpcc::customer::tableID) {
+      const auto &k = *static_cast<const tpcc::customer::key *>(key);
+      ss << tableId << ":" << k.C_W_ID << ":" << k.C_D_ID << ":" << k.C_ID; 
+    } else if (tableId == tpcc::item::tableID) {
+      const auto &k = *static_cast<const tpcc::item::key *>(key);
+      ss << tableId << ":" << k.I_ID; 
+    } else if (tableId == tpcc::stock::tableID) {
+      const auto &k = *static_cast<const tpcc::stock::key *>(key);
+      ss << tableId << ":" << k.S_W_ID << ":" << k.S_I_ID; 
+    } else if (tableId == tpcc::new_order::tableID) {
+      const auto &k = *static_cast<const tpcc::new_order::key *>(key);
+      ss << tableId << ":" << k.NO_W_ID << ":" << k.NO_D_ID << ":" << k.NO_O_ID; 
+    } else if (tableId == tpcc::order::tableID) {
+      const auto &k = *static_cast<const tpcc::order::key *>(key);
+      ss << tableId << ":" << k.O_W_ID << ":" << k.O_D_ID << ":" << k.O_ID; 
+    } else if (tableId == tpcc::order_line::tableID) {
+      const auto &k = *static_cast<const tpcc::order_line::key *>(key);
+      ss << tableId << ":" << k.OL_W_ID << ":" << k.OL_D_ID << ":" << k.OL_O_ID << ":" << k.OL_NUMBER; 
+    } else {
+      LOG(INFO)<<"**** Error in key type : key_toString().";
+    }
+    str_key = ss.str();
+    return str_key;
+  }
+
 private:
   /*
    * A bitvec is a 32-bit word.
    *
    * [ table id (5) ] | partition id (16) | unused bit (6) |
    * prepare processed bit (1) | execute processed bit(1) |
-   * write lock bit(1) | read lock bit (1) | local index read (1)  ]
+   * write key bit(1) | read_for_write key bit (1) | local index read (1)  ]
    *
    * local index read  is set when the read is from a local read only index.
-   * write lock bit is set when a write lock is acquired.
-   * read lock bit is set when a read lock is acquired.
+   * write key bit is set when the key is write key.
+   * read_for_write key bit is set when the key is read_for_write key.
    * prepare processed bit is set when process_request has processed this key in
    * prepare phase exucution processed bit is set when process_request has
    * processed this key in execution phase
@@ -145,6 +200,7 @@ private:
   uint32_t bitvec = 0;
   const void *key = nullptr;
   void *value = nullptr;
+  std::string str_key = "";
 
 public:
   static constexpr uint32_t TABLE_ID_MASK = 0x1f;
@@ -159,11 +215,11 @@ public:
   static constexpr uint32_t PREPARE_PROCESSED_BIT_MASK = 0x1;
   static constexpr uint32_t PREPARE_PROCESSED_BIT_OFFSET = 3;
 
-  static constexpr uint32_t WRITE_LOCK_BIT_MASK = 0x1;
-  static constexpr uint32_t WRITE_LOCK_BIT_OFFSET = 2;
+  static constexpr uint32_t WRITE_KEY_BIT_MASK = 0x1;
+  static constexpr uint32_t WRITE_KEY_BIT_OFFSET = 2;
 
-  static constexpr uint32_t READ_LOCK_BIT_MASK = 0x1;
-  static constexpr uint32_t READ_LOCK_BIT_OFFSET = 1;
+  static constexpr uint32_t READ_FOR_WRITE_KEY_BIT_MASK = 0x1;
+  static constexpr uint32_t READ_FOR_WRITE_KEY_BIT_OFFSET = 1;
 
   static constexpr uint32_t LOCAL_INDEX_READ_BIT_MASK = 0x1;
   static constexpr uint32_t LOCAL_INDEX_READ_BIT_OFFSET = 0;
