@@ -1,5 +1,5 @@
 //
-// Created by Yi Lu on 9/13/18.
+// Created by Yi Lu
 //
 
 #pragma once
@@ -9,17 +9,17 @@
 #include "common/MessagePiece.h"
 #include "core/ControlMessage.h"
 #include "core/Table.h"
-#include "protocol/Calvin/CalvinRWKey.h"
-#include "protocol/Calvin/CalvinTransaction.h"
+#include "protocol/Skew/SkewRWKey.h"
+#include "protocol/Skew/SkewTransaction.h"
 
 namespace aria {
 
-enum class CalvinMessage {
+enum class SkewMessage {
   READ_REQUEST = static_cast<int>(ControlMessage::NFIELDS),
   NFIELDS
 };
 
-class CalvinMessageFactory {
+class SkewMessageFactory {
 
 public:
   static std::size_t new_read_message(Message &message, ITable &table,
@@ -36,7 +36,7 @@ public:
                         sizeof(key_offset) + value_size;
 
     auto message_piece_header = MessagePiece::construct_message_piece_header(
-        static_cast<uint32_t>(CalvinMessage::READ_REQUEST), message_size,
+        static_cast<uint32_t>(SkewMessage::READ_REQUEST), message_size,
         table.tableID(), table.partitionID());
 
     Encoder encoder(message.data);
@@ -48,8 +48,8 @@ public:
   }
 };
 
-class CalvinMessageHandler {
-  using Transaction = CalvinTransaction;
+class SkewMessageHandler {
+  using Transaction = SkewTransaction;
 
 public:
   static void
@@ -57,7 +57,7 @@ public:
                        ITable &table,
                        std::vector<std::unique_ptr<Transaction>> &txns) {
     DCHECK(inputPiece.get_message_type() ==
-           static_cast<uint32_t>(CalvinMessage::READ_REQUEST));
+           static_cast<uint32_t>(SkewMessage::READ_REQUEST));
     auto table_id = inputPiece.get_table_id();
     auto partition_id = inputPiece.get_partition_id();
     DCHECK(table_id == table.tableID());
@@ -81,7 +81,7 @@ public:
     dec >> tid >> key_offset;
     DCHECK(tid < txns.size());
     DCHECK(key_offset < txns[tid]->readSet.size());
-    CalvinRWKey &readKey = txns[tid]->readSet[key_offset];
+    SkewRWKey &readKey = txns[tid]->readSet[key_offset];
     dec.read_n_bytes(readKey.get_value(), value_size);
     txns[tid]->remote_read.fetch_add(-1);
   }
