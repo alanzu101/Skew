@@ -125,9 +125,7 @@ public:
     }
   }
 
-  void add_worker(const std::shared_ptr<CalvinExecutor<WorkloadType>>
-
-                      &w) {
+  void add_worker(const std::shared_ptr<CalvinExecutor<WorkloadType>> &w) {
     workers.push_back(w);
   }
 

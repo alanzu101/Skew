@@ -1,5 +1,6 @@
 //
 // Created by Yi Lu on 9/7/18.
+// Modified by Alan Zu on 2/28/2023.
 //
 
 #pragma once
@@ -18,6 +19,10 @@
 #include "protocol/Calvin/CalvinExecutor.h"
 #include "protocol/Calvin/CalvinManager.h"
 #include "protocol/Calvin/CalvinTransaction.h"
+
+#include "protocol/Skew/SkewExecutor.h"
+#include "protocol/Skew/SkewManager.h"
+#include "protocol/Skew/SkewTransaction.h"
 
 #include "protocol/Bohm/Bohm.h"
 #include "protocol/Bohm/BohmExecutor.h"
@@ -65,8 +70,10 @@ public:
                  const Context &context, std::atomic<bool> &stop_flag) {
 
     std::unordered_set<std::string> protocols = {
-       "TwoPL",
+       "TwoPL", "Skew",
         "Calvin", "Bohm",   "Aria",   "AriaFB", "Pwv"};
+
+    LOG(INFO) <<"context.protocol = " << context.protocol;
     CHECK(protocols.count(context.protocol) == 1);
 
     std::vector<std::shared_ptr<Worker>> workers;
@@ -120,6 +127,39 @@ public:
         static_cast<CalvinExecutor<WorkloadType> *>(workers[i].get())
             ->set_all_executors(all_executors);
       }
+    } else if (context.protocol == "Skew") {
+
+      using TransactionType = aria::SkewTransaction;
+      using WorkloadType =
+          typename InferType<Context>::template WorkloadType<TransactionType>;
+
+      // create manager
+
+      auto manager = std::make_shared<SkewManager<WorkloadType>>(
+          coordinator_id, context.worker_num, db, context, stop_flag);
+
+      // create worker
+
+      std::vector<SkewExecutor<WorkloadType> *> all_executors;
+
+      for (auto i = 0u; i < context.worker_num; i++) {
+        auto w = std::make_shared<SkewExecutor<WorkloadType>>(
+            coordinator_id, i, db, context, manager->transactions,
+            manager->storages, manager->scheduler_status,
+            manager->worker_status, manager->n_completed_workers,
+            manager->n_started_workers, manager->n_scheduler,
+            manager->schedule_maps, manager->batch_count);
+
+        workers.push_back(w);
+        manager->add_worker(w);
+        all_executors.push_back(w.get());
+      }
+      // push manager to workers
+      workers.push_back(manager);
+      for (auto i = 0u; i < context.worker_num; i++) {
+        static_cast<SkewExecutor<WorkloadType> *>(workers[i].get())
+            ->set_all_executors(all_executors);
+      }  
     } else if (context.protocol == "Bohm") {
 
       using TransactionType = aria::BohmTransaction;
