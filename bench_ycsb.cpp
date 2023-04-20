@@ -2,10 +2,10 @@
 #include "core/Coordinator.h"
 #include "core/Macros.h"
 
-DEFINE_int32(read_write_ratio, 80, "read write ratio");
-DEFINE_int32(read_only_ratio, 0, "read only transaction ratio");
+DEFINE_int32(read_write_ratio, 10, "read write ratio");
+DEFINE_int32(read_only_ratio, 90, "read only transaction ratio");
 DEFINE_int32(cross_ratio, 0, "cross partition transaction ratio");
-DEFINE_int32(keys, 200000, "keys in a partition.");
+DEFINE_int32(keys, 100, " 200000 keys in a partition.");
 DEFINE_double(zipf, 0, "skew factor");
 DEFINE_string(skew_pattern, "both", "skew pattern: both, read, write");
 DEFINE_bool(two_partitions, false, "dist transactions access two partitions.");
@@ -38,6 +38,7 @@ int main(int argc, char *argv[]) {
   context.two_partitions = FLAGS_two_partitions;
   context.pwv_ycsb_star = FLAGS_pwv_ycsb_star;
   context.global_key_space = FLAGS_global_key_space;
+  context.is_ycsb = true;
 
   if (FLAGS_zipf > 0) {
     context.isUniform = false;
