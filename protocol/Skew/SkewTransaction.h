@@ -1,32 +1,34 @@
 //
-// Created by Yi Lu on 9/14/18.
+// Created by Yi Lu
+// Modified by Alan Zu
 //
 
 #pragma once
 
-#include "common/Operation.h"
-#include "core/Defs.h"
-#include "protocol/Calvin/CalvinHelper.h"
-#include "protocol/Calvin/CalvinPartitioner.h"
-#include "protocol/Calvin/CalvinRWKey.h"
 #include <chrono>
 #include <glog/logging.h>
 #include <thread>
+#include "core/Defs.h"
+#include "protocol/Skew/SkewHelper.h"
+#include "protocol/Skew/SkewPartitioner.h"
+#include "protocol/Skew/SkewRWKey.h"
+#include "common/Operation.h"
+
 
 namespace aria {
-class CalvinTransaction {
+
+class SkewTransaction {
 
 public:
-  using MetaDataType = std::atomic<uint64_t>;
 
-  CalvinTransaction(std::size_t coordinator_id, std::size_t partition_id,
+  SkewTransaction(std::size_t coordinator_id, std::size_t partition_id,
                     Partitioner &partitioner)
       : coordinator_id(coordinator_id), partition_id(partition_id),
         startTime(std::chrono::steady_clock::now()), partitioner(partitioner) {
     reset();
   }
 
-  virtual ~CalvinTransaction() = default;
+  virtual ~SkewTransaction() = default;
 
   void reset() {
     local_read.store(0);
@@ -41,6 +43,7 @@ public:
     operation.clear();
     readSet.clear();
     writeSet.clear();
+    rw_SkewRWKeys.clear();
   }
 
   virtual TransactionResult execute(std::size_t worker_id) = 0;
@@ -55,7 +58,7 @@ public:
       return;
     }
 
-    CalvinRWKey readKey;
+    SkewRWKey readKey;
 
     readKey.set_table_id(table_id);
     readKey.set_partition_id(partition_id);
@@ -66,6 +69,8 @@ public:
     readKey.set_local_index_read_bit();
 
     add_to_read_set(readKey);
+
+    // not involve in scheduling.
   }
 
   template <class KeyType, class ValueType>
@@ -76,7 +81,7 @@ public:
       return;
     }
 
-    CalvinRWKey readKey;
+    SkewRWKey readKey;
 
     readKey.set_table_id(table_id);
     readKey.set_partition_id(partition_id);
@@ -84,9 +89,8 @@ public:
     readKey.set_key(&key);
     readKey.set_value(&value);
 
-    readKey.set_read_lock_bit();
-
     add_to_read_set(readKey);
+    rw_SkewRWKeys.push_back(readKey);
   }
 
   template <class KeyType, class ValueType>
@@ -96,7 +100,7 @@ public:
       return;
     }
 
-    CalvinRWKey readKey;
+    SkewRWKey readKey;
 
     readKey.set_table_id(table_id);
     readKey.set_partition_id(partition_id);
@@ -104,9 +108,10 @@ public:
     readKey.set_key(&key);
     readKey.set_value(&value);
 
-    readKey.set_write_lock_bit();
+    readKey.set_read_for_write_key_bit();
 
     add_to_read_set(readKey);
+    rw_SkewRWKeys.push_back(readKey);
   }
 
   template <class KeyType, class ValueType>
@@ -117,7 +122,7 @@ public:
       return;
     }
 
-    CalvinRWKey writeKey;
+    SkewRWKey writeKey;
 
     writeKey.set_table_id(table_id);
     writeKey.set_partition_id(partition_id);
@@ -126,15 +131,18 @@ public:
     // the object pointed by value will not be updated
     writeKey.set_value(const_cast<ValueType *>(&value));
 
+    writeKey.set_write_key_bit();
+
     add_to_write_set(writeKey);
+    rw_SkewRWKeys.push_back(writeKey);
   }
 
-  std::size_t add_to_read_set(const CalvinRWKey &key) {
+  std::size_t add_to_read_set(const SkewRWKey &key) {
     readSet.push_back(key);
     return readSet.size() - 1;
   }
 
-  std::size_t add_to_write_set(const CalvinRWKey &key) {
+  std::size_t add_to_write_set(const SkewRWKey &key) {
     writeSet.push_back(key);
     return writeSet.size() - 1;
   }
@@ -176,42 +184,47 @@ public:
   }
 
   void
-  setup_process_requests_in_execution_phase(std::size_t n_lock_manager,
+  setup_process_requests_in_execution_phase(std::size_t n_scheduler,
                                             std::size_t n_worker,
                                             std::size_t replica_group_size) {
-    // only read the keys with locks from the lock_manager_id
-    process_requests = [this, n_lock_manager, n_worker,
+   
+    process_requests = [this, n_scheduler, n_worker,
                         replica_group_size](std::size_t worker_id) {
-      auto lock_manager_id = CalvinHelper::worker_id_to_lock_manager_id(
-          worker_id, n_lock_manager, n_worker);
+      auto scheduler_id = SkewHelper::worker_id_to_scheduler_id(
+          worker_id, n_scheduler, n_worker);
 
-      // cannot use unsigned type in reverse iteration
-      for (int i = int(readSet.size()) - 1; i >= 0; i--) {
-
-        if (readSet[i].get_local_index_read_bit()) {
+      // LOG(INFO) << "In process_requests(), worker(" << worker_id <<") starts on T" << this->id << std::endl;
+      auto &rw_keys = this->rw_SkewRWKeys;
+      uint32_t n_rw_keys = static_cast<unsigned int>(rw_keys.size());
+      for (uint32_t k = 0u; k < n_rw_keys; k++) {
+        auto &rw_key = rw_keys[k];
+        if (rw_key.get_local_index_read_bit()) {
           continue;
         }
 
-        if (CalvinHelper::partition_id_to_lock_manager_id(
-                readSet[i].get_partition_id(), n_lock_manager,
-                replica_group_size) != lock_manager_id) {
+        if (SkewHelper::partition_id_to_scheduler_id(
+                rw_key.get_partition_id(), n_scheduler,
+                replica_group_size) != scheduler_id) {
           continue;
         }
 
         // early return
-        if (readSet[i].get_execution_processed_bit()) {
+        if (rw_key.get_execution_processed_bit()) {
           break;
         }
 
-        auto &readKey = readSet[i];
-        read_handler(worker_id, readKey.get_table_id(),
-                     readKey.get_partition_id(), id, i, readKey.get_key(),
-                     readKey.get_value());
+        if (rw_key.is_write_key()) {
+          write_handler(worker_id, this->id, k, rw_key);
+        } else {
+          read_handler(worker_id, this->id, k, rw_key);  
+        }
 
-        readSet[i].set_execution_processed_bit();
+        rw_key.set_execution_processed_bit();
       }
 
       message_flusher(worker_id);
+
+      // LOG(INFO) << "In process_requests(), worker(" << worker_id <<") has done on T" << this->id << "; after message_flusher()" << std::endl;
 
       if (active_coordinators[coordinator_id]) {
 
@@ -258,6 +271,7 @@ public:
   int32_t saved_local_read, saved_remote_read;
 
   bool abort_no_retry;
+
   bool distributed_transaction;
   bool execution_phase;
 
@@ -267,10 +281,13 @@ public:
   std::function<void(std::size_t, std::size_t, const void *, void *)>
       local_index_read_handler;
 
-  // table id, partition id, id, key_offset, key, value
-  std::function<void(std::size_t, std::size_t, std::size_t, std::size_t,
-                     uint32_t, const void *, void *)>
+  // worker_id, txn_id, key_offset, rw_key
+  std::function<void(std::size_t, std::size_t, uint32_t, SkewRWKey &)>
       read_handler;
+
+  // worker_id, txn_id, key_offset, rw_key
+  std::function<void(std::size_t, std::size_t, uint32_t, SkewRWKey &)>
+      write_handler;
 
   // processed a request?
   std::function<std::size_t(std::size_t)> remote_request_handler;
@@ -280,6 +297,9 @@ public:
   Partitioner &partitioner;
   std::vector<bool> active_coordinators;
   Operation operation; // never used
-  std::vector<CalvinRWKey> readSet, writeSet;
+  std::vector<SkewRWKey> readSet, writeSet;
+
+  // for schedule_map's keys
+  std::vector<SkewRWKey>  rw_SkewRWKeys;  
 };
 } // namespace aria
