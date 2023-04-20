@@ -74,7 +74,7 @@ public:
 
     std::vector<std::thread> threads;
 
-    LOG(INFO) << "Coordinator starts to run " << workers.size() << " workers.";
+    LOG(INFO) << "Coordinator starts to run " << workers.size() << " worker threads.";
 
     for (auto i = 0u; i < workers.size(); i++) {
       threads.emplace_back(&Worker::start, workers[i].get());
@@ -84,7 +84,9 @@ public:
     }
 
     // run timeToRun seconds
-    auto timeToRun = 25, warmup = 10, cooldown = 5;
+    auto timeToRun = context.time_to_run;
+    auto warmup = context.time_to_warmup; 
+    auto cooldown = context.time_to_cooldown;
     auto startTime = std::chrono::steady_clock::now();
 
     uint64_t total_commit = 0, total_abort_no_retry = 0, total_abort_lock = 0,
@@ -351,7 +353,7 @@ private:
     CPU_ZERO(&cpuset);
     CPU_SET(core_id++, &cpuset);
     int rc =
-        pthread_setaffinity_np(t.native_handle(), sizeof(cpu_set_t), &cpuset);
+        pthread_setaffinity_np(t.native_handle(), sizeof(cpu_set_t), &cpuset);   
     CHECK(rc == 0);
 #endif
   }
