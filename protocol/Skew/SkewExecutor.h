@@ -57,7 +57,7 @@ public:
         schedule_maps(schedule_maps),
         scheduler_id(SkewHelper::worker_id_to_scheduler_id(
             id, n_scheduler, n_workers)),
-        init_transaction(false), batch_count(batch_count),
+        batch_count(batch_count), init_transaction(false),
         random(id), // make sure each worker has a different seed.
         delay(std::make_unique<SameDelay>(
             coordinator_id, context.coordinator_num, context.delay_time)) {
