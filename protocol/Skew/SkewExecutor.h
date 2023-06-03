@@ -309,7 +309,7 @@ public:
 
             execute_flags[i] = true;
 
-            SkewHelper::add_to_map(schedule_maps, scheduler_id, rw_key, n_workers, i, is_ycsb);
+            SkewHelper::add_to_map(schedule_maps, scheduler_id, rw_key, context.worker_num, i, is_ycsb);
 
           }
             // LOG(INFO)<<"scheduler_id:" << scheduler_id << "; done with T" << i << ". " << std::endl;
@@ -395,7 +395,12 @@ public:
             break;
           } else {
           
-            std::unique_lock<std::mutex> lock(skew_v->mutex);
+            std::unique_lock<std::mutex> lock(skew_v->mutex);    
+            cur_write_key_info = skew_v->getCurWriteKeyInfo();
+            if (txn.id <= cur_write_key_info->getTransactionId()) {
+              break;
+            }
+            
             skew_v->cond_var_flags[worker_id] = false;
             /*
             LOG(INFO) << "In read_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
@@ -404,22 +409,13 @@ public:
                   << "; flag=" << skew_v->cond_var_flags[worker_id] <<";  ====> wait... " << std::endl;
             */
 
-            bool ret = skew_v->cond_var.wait_for(lock, worker_id*200us, [&skew_v, worker_id](){ return skew_v->cond_var_flags[worker_id]; });
-            // skew_v->cond_var.wait(lock, [&skew_v, worker_id](){ return skew_v->cond_var_flags[worker_id]; });
-            
+            skew_v->cond_var.wait(lock, [&skew_v, worker_id](){ return skew_v->cond_var_flags[worker_id]; });
             /*
-            if(ret) {
-              LOG(INFO) << "In read_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
-                  << rw_key.key_toString(is_ycsb) << "); maps[" << worker->scheduler_id << "]-->vec[" << current_write_index << "] = ("
+            LOG(INFO) << "In read_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
+                  << rw_key.key_toString(is_ycsb) << "); maps[" << worker->scheduler_id << "]: ("
                   << cur_write_key_info->getTransactionId() << ":" << ((cur_write_key_info->isWriteKey())? "W" : "R") <<"); read_count:" << skew_v->getReadCount() 
-                  << ";flag=" << skew_v->cond_var_flags[worker_id] <<";  ====> woke up! " << std::endl;          
-            } else {
-              LOG(INFO) << "In read_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
-                  << rw_key.key_toString(is_ycsb) << "); maps[" << worker->scheduler_id << "]-->vec[" << current_write_index << "] = ("
-                  << cur_write_key_info->getTransactionId() << ":" << ((cur_write_key_info->isWriteKey())? "W" : "R") <<"); read_count:" << skew_v->getReadCount() 
-                  << ";flag=" << skew_v->cond_var_flags[worker_id] <<";  ====> time out! " << std::endl;   
-            }
-            */
+                  << ";flag=" << skew_v->cond_var_flags[worker_id] <<";  ====> woke up! " << std::endl;
+            */ 
           }
         }
 
@@ -430,9 +426,8 @@ public:
         if (skew_v->read_count.load() == 0) {
           // wake up all waiting threads.
           std::lock_guard<std::mutex> lock(skew_v->mutex);
-          std::fill(skew_v->cond_var_flags.begin(),skew_v->cond_var_flags.end(), true);
+          std::fill(skew_v->cond_var_flags.begin(), skew_v->cond_var_flags.end(), true);
           skew_v->cond_var.notify_all();
-
           /*
           LOG(INFO) << "In read_handler(), worker(" << worker_id <<") has done T" << txn.id << ":key(" 
                   << rw_key.key_toString(is_ycsb) << "); current_write_index = " << skew_v->getWriteIndex() 
@@ -467,50 +462,44 @@ public:
         // check the schedule_map, make sure this transaction is the current T on the key.
         std::unique_ptr<SkewVector> &skew_v = worker->schedule_maps[worker->scheduler_id]->getSkewVector(rw_key);;
         for(;;) {
-          //uint32_t current_write_index = static_cast<uint32_t>(skew_v->getWriteIndex());
           std::shared_ptr<SkewKeyInfo> &cur_write_key_info = skew_v->getCurWriteKeyInfo();
           if (cur_write_key_info->getTransactionId() == txn.id && skew_v->getReadCount() == 0) {
-            /*
+          /*  
             LOG(INFO) << "In write_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
                   << rw_key.key_toString(is_ycsb) << "); maps[" << worker->scheduler_id << "]: ("
                   << cur_write_key_info->getTransactionId() << ":" << ((cur_write_key_info->isWriteKey())? "W" : "R") <<"); read_count:" << skew_v->getReadCount() << "  ====> execute!" << std::endl;
-            */      
+          */        
 
             break;
           } else if(cur_write_key_info->getTransactionId() < txn.id || skew_v->getReadCount() > 0) {
 
             std::unique_lock<std::mutex> lock(skew_v->mutex);
+            cur_write_key_info = skew_v->getCurWriteKeyInfo();
+            if (cur_write_key_info->getTransactionId() == txn.id && skew_v->getReadCount() == 0) {
+              break;
+            }
+
             skew_v->cond_var_flags[worker_id] = false;
-            
             /*
             LOG(INFO) << "In write_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
                   << rw_key.key_toString(is_ycsb) << "); maps[" << worker->scheduler_id << "]: ("
                   << cur_write_key_info->getTransactionId() << ":" << ((cur_write_key_info->isWriteKey())? "W" : "R") <<"); read_count:" << skew_v->getReadCount() 
                   << "; flag=" << skew_v->cond_var_flags[worker_id] <<"; ====> wait... " << std::endl;
             */
-           
-            bool ret = skew_v->cond_var.wait_for(lock, worker_id*200us, [&skew_v, worker_id](){ return skew_v->cond_var_flags[worker_id]; });
-            // skew_v->cond_var.wait(lock, [&skew_v, worker_id](){ return skew_v->cond_var_flags[worker_id]; });
             
+            skew_v->cond_var.wait(lock, [&skew_v, worker_id](){ return skew_v->cond_var_flags[worker_id]; });
             /*
-            if (ret) {
-              LOG(INFO) << "In write_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
-                  << rw_key.key_toString(is_ycsb) << "); maps[" << worker->scheduler_id << "]-->vec[" << current_write_index << "] = ("
+            LOG(INFO) << "In write_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
+                  << rw_key.key_toString(is_ycsb) << "); maps[" << worker->scheduler_id << "]: ("
                   << cur_write_key_info->getTransactionId() << ":" << ((cur_write_key_info->isWriteKey())? "W" : "R") <<"); read_count:" << skew_v->getReadCount() 
-                  << ";flag=" << skew_v->cond_var_flags[worker_id] <<";  ====> woke up! " << std::endl;          
-            } else {
-              LOG(INFO) << "In write_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
-                  << rw_key.key_toString(is_ycsb) << "); maps[" << worker->scheduler_id << "]-->vec[" << current_write_index << "] = ("
-                  << cur_write_key_info->getTransactionId() << ":" << ((cur_write_key_info->isWriteKey())? "W" : "R") <<"); read_count:" << skew_v->getReadCount() 
-                  << ";flag=" << skew_v->cond_var_flags[worker_id] <<";  ====> time out! " << std::endl;   
-            }
-            */
+                  << ";flag=" << skew_v->cond_var_flags[worker_id] <<";  ====> woke up! " << std::endl; 
+            */  
+            
           } else if (cur_write_key_info->getTransactionId() > txn.id) {   // this txn should have been processed already.
             
             LOG(INFO) << "Error: In write_handler(), worker(" << worker_id <<") on T" << txn.id << ":key(" 
                   << rw_key.key_toString(is_ycsb) << "); maps[" << worker->scheduler_id << "]: ("
-                  << cur_write_key_info->getTransactionId() << ":" << ((cur_write_key_info->isWriteKey())? "W" : "R") <<"); read_count:" << skew_v->getReadCount() << " ====> should never happen!" << std::endl;
-            
+                  << cur_write_key_info->getTransactionId() << ":" << ((cur_write_key_info->isWriteKey())? "W" : "R") <<"); read_count:" << skew_v->getReadCount() << " ====> should never happen!" << std::endl;  
           }
         }
 
@@ -518,8 +507,7 @@ public:
 
         {
           // wake up all waiting threads.
-          std::lock_guard<std::mutex> lock(skew_v->mutex);
-         
+          std::lock_guard<std::mutex> lock(skew_v->mutex); 
           skew_v->nextWriteIndex();
           std::fill(skew_v->cond_var_flags.begin(),skew_v->cond_var_flags.end(), true);
           skew_v->cond_var.notify_all();

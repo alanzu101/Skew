@@ -27,14 +27,14 @@ public:
 public:
   std::size_t coordinator_id = 0;
   std::size_t partition_num = 2;
-  std::size_t worker_num = 10;
+  std::size_t worker_num = 8;
   std::size_t coordinator_num = 0;
   std::size_t io_thread_num = 1;
   std::string protocol;
   std::string replica_group = "1";   //"1,3" for Skew, calvin
   std::string lock_manager;
   std::string scheduler = "2";   //"3,6" for Skew
-  std::size_t batch_size = 10; //240 star, calvin, Skew, dbx batch size
+  std::size_t batch_size = 100; //240 star, calvin, Skew, dbx batch size
   std::size_t batch_flush = 10;
   int time_to_run = 25;   // seconds to run for Coordinator
   int time_to_warmup = 5; 

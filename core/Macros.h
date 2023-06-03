@@ -11,12 +11,12 @@
 DEFINE_string(servers, "127.0.0.1:10010",
               "semicolon-separated list of servers");
 DEFINE_int32(id, 0, "coordinator id");
-DEFINE_int32(threads, 6, "the number of threads");
+DEFINE_int32(threads, 8, "the number of threads");
 DEFINE_int32(io, 1, "the number of i/o threads");
 DEFINE_int32(partition_num, 2, "the number of partitions");
 DEFINE_string(partitioner, "hash", "database partitioner (hash, hash2, pb)");
 DEFINE_bool(sleep_on_retry, true, "sleep when retry aborted transactions");
-DEFINE_int32(batch_size, 1000, "1150, star, skew or calvin batch size");
+DEFINE_int32(batch_size, 100, "1150, star, skew or calvin batch size");
 DEFINE_int32(group_time, 10, "group commit frequency");
 DEFINE_int32(batch_flush, 50, "batch flush");
 DEFINE_int32(sleep_time, 1000, "retry sleep time");
