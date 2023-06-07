@@ -45,6 +45,7 @@ public:
   auto capacity() { return N; }
 
 private:
-  void nop_pause() { __asm volatile("pause" : :); }
+  // use pause for intel chip, use yield for M1/M2 mac chip
+  void nop_pause() { __asm volatile("yield" : :); }
 };
 } // namespace aria
